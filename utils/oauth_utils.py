@@ -1,9 +1,4 @@
-"""OAuth 2.0 / PKCE helpers and authorization-flow analysis.
 
-Day 1 scaffold: PKCE generation/verification and auth-URL parsing are
-implemented. Deeper flow analysis (token endpoint round-trips, discovery
-document fetches) is stubbed for later.
-"""
 
 from __future__ import annotations
 
