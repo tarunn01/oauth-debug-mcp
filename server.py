@@ -38,6 +38,20 @@ def verify_jwt(token: str, key: str, algorithms: list[str] | None = None) -> dic
     return jwt_utils.verify_jwt(token, key, algorithms)
 
 
+@mcp.tool()
+def verify_jwt_online(
+    token: str,
+    jwks_uri: str,
+    audience: str | None = None,
+    issuer: str | None = None,
+) -> dict[str, Any]:
+    """Verify a JWT against a provider's live JWKS endpoint (fetches public keys).
+
+    Get the jwks_uri from `discover_oidc`. Optionally check the audience/issuer.
+    """
+    return jwt_utils.verify_jwt_with_jwks(token, jwks_uri, audience=audience, issuer=issuer)
+
+
 # --- OAuth / PKCE tools ------------------------------------------------------
 
 @mcp.tool()
@@ -56,6 +70,16 @@ def verify_pkce(code_verifier: str, code_challenge: str, method: str = "S256") -
 def analyze_authorization_url(url: str) -> dict[str, Any]:
     """Parse an OAuth authorization request URL and flag common problems."""
     return oauth_utils.analyze_authorization_url(url)
+
+
+@mcp.tool()
+def discover_oidc(issuer: str) -> dict[str, Any]:
+    """Fetch an OIDC provider's discovery document and summarize its endpoints.
+
+    Pass an issuer base URL, e.g. https://accounts.google.com — returns the
+    authorization/token/userinfo/jwks endpoints and supported capabilities.
+    """
+    return oauth_utils.fetch_discovery_document(issuer)
 
 
 # --- Config linting tool -----------------------------------------------------

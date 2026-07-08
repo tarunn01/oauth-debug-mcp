@@ -12,6 +12,7 @@ import hashlib
 import secrets
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+import httpx
 
 
 def generate_pkce_pair(length: int = 64) -> dict[str, str]:
@@ -76,6 +77,40 @@ def analyze_authorization_url(url: str) -> dict[str, Any]:
     }
 
 
-# TODO(week1): fetch and validate the OIDC discovery document (.well-known).
-def fetch_discovery_document(issuer: str) -> dict[str, Any]:  # pragma: no cover
-    raise NotImplementedError("OIDC discovery fetch lands later this week")
+def fetch_discovery_document(issuer: str, timeout: float = 10.0) -> dict[str, Any]:
+    """Fetch and summarize an OIDC provider's discovery document.
+
+    Given an issuer base URL (e.g. https://accounts.google.com), fetches
+    ``{issuer}/.well-known/openid-configuration`` and pulls out the endpoints
+    and capabilities that matter when debugging a flow. Network/HTTP errors are
+    returned as data (``ok: False``) rather than raised, so the tool degrades
+    gracefully.
+    """
+    discovery_url = issuer.rstrip("/") + "/.well-known/openid-configuration"
+    try:
+        response = httpx.get(discovery_url, timeout=timeout, follow_redirects=True)
+        response.raise_for_status()
+        doc = response.json()
+    except httpx.HTTPError as exc:
+        return {"ok": False, "discovery_url": discovery_url, "error": str(exc)}
+
+    findings: list[str] = []
+    if "code" not in (doc.get("response_types_supported") or []):
+        findings.append("does not advertise the authorization-code response type")
+    if "S256" not in (doc.get("code_challenge_methods_supported") or []):
+        findings.append("does not advertise PKCE S256 support")
+
+    return {
+        "ok": True,
+        "discovery_url": discovery_url,
+        "issuer": doc.get("issuer"),
+        "authorization_endpoint": doc.get("authorization_endpoint"),
+        "token_endpoint": doc.get("token_endpoint"),
+        "userinfo_endpoint": doc.get("userinfo_endpoint"),
+        "jwks_uri": doc.get("jwks_uri"),
+        "scopes_supported": doc.get("scopes_supported"),
+        "response_types_supported": doc.get("response_types_supported"),
+        "grant_types_supported": doc.get("grant_types_supported"),
+        "code_challenge_methods_supported": doc.get("code_challenge_methods_supported"),
+        "findings": findings,
+    }

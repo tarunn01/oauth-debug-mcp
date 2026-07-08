@@ -14,7 +14,7 @@ import time
 from typing import Any
 
 import jwt
-from jwt import InvalidTokenError
+from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
 
 
 def _b64url_decode(segment: str) -> bytes:
@@ -92,6 +92,36 @@ def verify_jwt(token: str, key: str, algorithms: list[str] | None = None) -> dic
         return {"valid": False, "error": str(exc)}
 
 
-# TODO(week1): resolve signing key from an OIDC issuer's JWKS endpoint (httpx).
-def verify_jwt_with_jwks(token: str, jwks_url: str) -> dict[str, Any]:  # pragma: no cover
-    raise NotImplementedError("JWKS-based verification lands later this week")
+def verify_jwt_with_jwks(
+    token: str,
+    jwks_uri: str,
+    algorithms: list[str] | None = None,
+    audience: str | None = None,
+    issuer: str | None = None,
+) -> dict[str, Any]:
+    """Verify a JWT's signature against a provider's live JWKS endpoint.
+
+    Fetches the JSON Web Key Set at ``jwks_uri``, selects the key whose ``kid``
+    matches the token header, and verifies the signature — plus optional
+    ``audience`` / ``issuer`` claim checks. This is how you validate a real
+    token from Google/Auth0/etc. without pasting public keys by hand.
+
+    Failures (bad signature, expired, unreachable JWKS, no matching key) are
+    returned as ``valid: False`` with an ``error`` message.
+    """
+    algorithms = algorithms or ["RS256", "ES256"]
+    try:
+        kid = jwt.get_unverified_header(token).get("kid")
+        signing_key = PyJWKClient(jwks_uri).get_signing_key_from_jwt(token)
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=algorithms,
+            audience=audience,
+            issuer=issuer,
+            # Only enforce the audience claim when the caller supplies one.
+            options={"verify_aud": audience is not None},
+        )
+        return {"valid": True, "kid": kid, "payload": payload}
+    except (InvalidTokenError, PyJWKClientError) as exc:
+        return {"valid": False, "error": str(exc)}
