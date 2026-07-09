@@ -6,7 +6,8 @@ import base64
 import hashlib
 import secrets
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
+
 import httpx
 
 
@@ -108,4 +109,147 @@ def fetch_discovery_document(issuer: str, timeout: float = 10.0) -> dict[str, An
         "grant_types_supported": doc.get("grant_types_supported"),
         "code_challenge_methods_supported": doc.get("code_challenge_methods_supported"),
         "findings": findings,
+    }
+
+
+def build_authorization_url(
+    authorization_endpoint: str,
+    client_id: str,
+    redirect_uri: str,
+    scope: str = "openid email profile",
+    state: str | None = None,
+    code_challenge: str | None = None,
+    code_challenge_method: str = "S256",
+) -> dict[str, Any]:
+    """Construct an OAuth 2.0 authorization-code request URL.
+
+    This is the URL you send a user's browser to in order to start login. For
+    public clients, pass a PKCE ``code_challenge``. A random ``state`` is
+    generated if you don't supply one (CSRF protection).
+    """
+    state = state or secrets.token_urlsafe(16)
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "state": state,
+    }
+    if code_challenge:
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = code_challenge_method
+
+    return {
+        "authorization_url": authorization_endpoint + "?" + urlencode(params),
+        "params": params,
+        "state": state,
+    }
+
+
+def simulate_auth_code_flow(
+    issuer: str,
+    client_id: str = "YOUR_CLIENT_ID",
+    redirect_uri: str = "http://localhost:8080/callback",
+    scope: str = "openid email profile",
+) -> dict[str, Any]:
+    """Walk an Authorization Code + PKCE flow end to end for a given issuer.
+
+    Steps 1-3 (discovery, PKCE, auth URL) are *executed* for real; steps 4-6
+    (browser login, token exchange, ID-token verification) need a live user, so
+    they are *described* with the exact requests that would be made. Returns an
+    ordered list of steps you can follow or hand to a user.
+    """
+    steps: list[dict[str, Any]] = []
+
+    # Step 1 — Discovery (executed)
+    disc = fetch_discovery_document(issuer)
+    if not disc.get("ok"):
+        return {"ok": False, "failed_at": "discovery", "error": disc.get("error"), "steps": steps}
+    steps.append({
+        "step": 1,
+        "name": "OIDC Discovery",
+        "status": "executed",
+        "detail": f"Fetched {disc['discovery_url']} to locate the provider's endpoints.",
+        "data": {
+            "authorization_endpoint": disc["authorization_endpoint"],
+            "token_endpoint": disc["token_endpoint"],
+            "jwks_uri": disc["jwks_uri"],
+        },
+    })
+
+    # Step 2 — Generate PKCE (executed)
+    pkce = generate_pkce_pair()
+    steps.append({
+        "step": 2,
+        "name": "Generate PKCE pair",
+        "status": "executed",
+        "detail": "code_verifier stays secret on the client; the S256 code_challenge goes in the auth URL.",
+        "data": pkce,
+    })
+
+    # Step 3 — Build authorization URL (executed)
+    built = build_authorization_url(
+        disc["authorization_endpoint"],
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        scope=scope,
+        code_challenge=pkce["code_challenge"],
+        code_challenge_method=pkce["code_challenge_method"],
+    )
+    steps.append({
+        "step": 3,
+        "name": "Build authorization URL",
+        "status": "executed",
+        "detail": "Send the user's browser here to log in and consent.",
+        "data": {"authorization_url": built["authorization_url"], "state": built["state"]},
+    })
+
+    # Step 4 — User authenticates (manual)
+    steps.append({
+        "step": 4,
+        "name": "User logs in & consents",
+        "status": "manual",
+        "detail": (
+            f"Open the step-3 URL in a browser. After login the provider redirects to "
+            f"{redirect_uri}?code=AUTH_CODE&state={built['state']}. Confirm the returned "
+            "state matches before continuing (CSRF check)."
+        ),
+    })
+
+    # Step 5 — Exchange code for tokens (described)
+    steps.append({
+        "step": 5,
+        "name": "Exchange code for tokens",
+        "status": "described",
+        "detail": "POST the auth code + code_verifier to the token endpoint:",
+        "data": {
+            "method": "POST",
+            "url": disc["token_endpoint"],
+            "body": {
+                "grant_type": "authorization_code",
+                "code": "AUTH_CODE_FROM_STEP_4",
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "code_verifier": pkce["code_verifier"],
+            },
+        },
+    })
+
+    # Step 6 — Verify the ID token (described)
+    steps.append({
+        "step": 6,
+        "name": "Verify the ID token",
+        "status": "described",
+        "detail": (
+            "The token response includes an id_token (a JWT). Verify it with "
+            "verify_jwt_online(id_token, jwks_uri) using the jwks_uri below."
+        ),
+        "data": {"jwks_uri": disc["jwks_uri"]},
+    })
+
+    return {
+        "ok": True,
+        "issuer": disc["issuer"],
+        "summary": "Authorization Code + PKCE — steps 1-3 executed, 4-6 need a browser/user.",
+        "steps": steps,
     }

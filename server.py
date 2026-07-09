@@ -82,6 +82,42 @@ def discover_oidc(issuer: str) -> dict[str, Any]:
     return oauth_utils.fetch_discovery_document(issuer)
 
 
+@mcp.tool()
+def build_authorization_url(
+    authorization_endpoint: str,
+    client_id: str,
+    redirect_uri: str,
+    scope: str = "openid email profile",
+    code_challenge: str | None = None,
+    code_challenge_method: str = "S256",
+) -> dict[str, Any]:
+    """Construct an OAuth 2.0 authorization-code login URL (with optional PKCE)."""
+    return oauth_utils.build_authorization_url(
+        authorization_endpoint,
+        client_id,
+        redirect_uri,
+        scope,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+    )
+
+
+@mcp.tool()
+def simulate_auth_code_flow(
+    issuer: str,
+    client_id: str = "YOUR_CLIENT_ID",
+    redirect_uri: str = "http://localhost:8080/callback",
+    scope: str = "openid email profile",
+) -> dict[str, Any]:
+    """Walk an Authorization Code + PKCE flow end-to-end for an issuer.
+
+    Executes discovery, PKCE, and auth-URL steps for real; describes the
+    browser-login, token-exchange, and ID-token-verify steps. Great for
+    understanding how the whole flow fits together.
+    """
+    return oauth_utils.simulate_auth_code_flow(issuer, client_id, redirect_uri, scope)
+
+
 # --- Config linting tool -----------------------------------------------------
 
 @mcp.tool()
